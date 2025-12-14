@@ -19,7 +19,7 @@ interface Dot {
 export function FloatingDots() {
   const [dots, setDots] = useState<Dot[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
-  const animationRef = useRef<number>()
+  const animationRef = useRef<number | undefined>(undefined)
   const dotsRef = useRef<Dot[]>([])
 
   // Initialize dots

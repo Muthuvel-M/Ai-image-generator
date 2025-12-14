@@ -1,9 +1,9 @@
 "use client"
 
-import type React from "react"
+import React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Sparkles, ImageIcon, Lightbulb, Wand2 } from "lucide-react"
+import { Send, Sparkles, ImageIcon, Lightbulb, Wand2, ChevronDown, Menu } from "lucide-react"
 import { FloatingDots } from "./floating-dots"
 
 interface Message {
@@ -148,15 +148,56 @@ export function AIChatScreen() {
   }
 
   return (
-    <div className="relative min-h-screen bg-[#fafafa] overflow-hidden flex flex-col">
+    <div className="relative h-screen bg-[#fafafa] overflow-hidden flex flex-col">
       {/* Floating Dots Background */}
       <FloatingDots />
+
+      <nav className="relative z-30 w-full px-4 py-3">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-between bg-white/80 backdrop-blur-md rounded-full px-6 py-3 shadow-sm border border-border/30">
+            {/* Logo */}
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-foreground flex items-center justify-center">
+                <Sparkles className="w-4 h-4 text-background" />
+              </div>
+              <span className="font-semibold text-lg text-foreground">ArtifyAI</span>
+            </div>
+
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center gap-6">
+              <button className="flex items-center gap-1 text-sm text-foreground hover:text-muted-foreground transition-colors">
+                Features
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              <button className="flex items-center gap-1 text-sm text-foreground hover:text-muted-foreground transition-colors">
+                Explore
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              <button className="text-sm text-foreground hover:text-muted-foreground transition-colors">Pricing</button>
+            </div>
+
+            {/* Auth Buttons */}
+            <div className="hidden md:flex items-center gap-3">
+              <button className="text-sm text-foreground hover:text-muted-foreground transition-colors">Sign In</button>
+              <button className="flex items-center gap-1 px-4 py-2 rounded-full bg-foreground text-background text-sm font-medium hover:opacity-90 transition-opacity">
+                Get Started for Free
+                <ChevronDown className="w-4 h-4 rotate-[-90deg]" />
+              </button>
+            </div>
+
+            {/* Mobile Menu Button */}
+            <button className="md:hidden p-2 hover:bg-secondary rounded-lg transition-colors">
+              <Menu className="w-5 h-5 text-foreground" />
+            </button>
+          </div>
+        </div>
+      </nav>
 
       {!hasStartedConversation ? (
         <>
           {/* Main Content - Welcome Screen */}
-          <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-4">
-            <div className="text-center max-w-3xl mx-auto mb-20">
+          <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 pb-32 -mt-16">
+            <div className="text-center max-w-3xl mx-auto">
               <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-foreground leading-tight">
                 Transform your ideas into
               </h1>
@@ -169,7 +210,7 @@ export function AIChatScreen() {
       ) : (
         <>
           {/* Chat Messages Area */}
-          <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-8 pb-4">
+          <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-4 pb-48">
             <div className="max-w-3xl mx-auto space-y-4">
               {messages.map((message) => (
                 <div key={message.id} className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
@@ -236,7 +277,7 @@ export function AIChatScreen() {
       )}
 
       {/* Input Box at Bottom */}
-      <div className="relative z-10 w-full px-4 pb-8">
+      <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-6 pt-4 bg-gradient-to-t from-[#fafafa] via-[#fafafa] to-transparent">
         <div className="max-w-3xl mx-auto">
           <form onSubmit={handleSubmit}>
             <div className="bg-white rounded-2xl shadow-lg border border-border/50 p-4">
