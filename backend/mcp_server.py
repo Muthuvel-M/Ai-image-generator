@@ -7,10 +7,11 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict
-from vector_db import VectorDatabase
+from video_generator import DIDVideoGenerator, DEFAULT_AVATARS
 import logging
 import sqlite3
 from datetime import datetime
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,7 +33,12 @@ app.add_middleware(
 )
 
 # Initialize vector database
+from vector_db import VectorDatabase
 db = VectorDatabase()
+
+# Initialize Local Video Generator (MoviePy + TTS)
+from local_video_generator import LocalVideoGenerator
+video_gen = LocalVideoGenerator()
 
 # Initialize feedback database
 conn = sqlite3.connect('feedback.db', check_same_thread=False)
@@ -211,6 +217,64 @@ async def get_stats():
         "total_searches": total_searches,
         "average_rating": round(avg_rating, 2) if avg_rating else 0
     }
+
+
+# Video Generation Endpoints
+class VideoRequest(BaseModel):
+    script: str
+    avatar: Optional[str] = "professional_woman"
+
+
+@app.post("/api/generate-video")
+async def generate_video(request: VideoRequest):
+    """
+    Generate a talking head video using local TTS + MoviePy
+    
+    - **script**: Text to be spoken by the avatar
+    - **avatar**: Avatar choice (currently only professional_woman)
+    """
+    try:
+        if not request.script.strip():
+            raise HTTPException(status_code=400, detail="Script cannot be empty")
+        
+        logger.info(f"Generating video for script: {request.script[:50]}...")
+        
+        # Generate unique video ID
+        import uuid
+        video_id = str(uuid.uuid4())
+        
+        # Paths
+        avatar_path = "assets/avatars/professional_woman.jpg"
+        output_path = f"outputs/videos/{video_id}.mp4"
+        os.makedirs("outputs/videos", exist_ok=True)
+        
+        # Generate video (blocking)
+        video_gen.create_video(request.script, avatar_path, output_path)
+        
+       #Return video URL
+        video_url = f"/videos/{video_id}.mp4"
+        
+        return {
+            "status": "success",
+            "video_url": video_url,
+            "video_id": video_id,
+            "message": "Video generated successfully!"
+        }
+    except Exception as e:
+        logger.error(f"Video generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Serve video files
+from fastapi.responses import FileResponse
+
+@app.get("/videos/{video_id}.mp4")
+async def get_video(video_id: str):
+    """Serve generated video file"""
+    filepath = f"outputs/videos/{video_id}.mp4"
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Video not found")
+    return FileResponse(filepath, media_type="video/mp4")
 
 
 # Shutdown event

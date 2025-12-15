@@ -4,46 +4,34 @@ import { useState, useRef, useEffect } from "react"
 import { Send, Sparkles, ImageIcon, Lightbulb, Wand2, ChevronDown, Menu, Search, ThumbsUp, ThumbsDown } from "lucide-react"
 import { FloatingDots } from "./floating-dots"
 
+// Helper function to detect if prompt is for image generation
 const isImageGenerationPrompt = (text) => {
     const imageKeywords = [
-        "generate",
-        "create",
-        "make",
-        "draw",
-        "paint",
-        "design",
-        "image",
-        "picture",
-        "photo",
-        "art",
-        "illustration",
-        "visual",
-        "realistic",
-        "artistic",
-        "render",
-        "sketch",
+        'generate', 'create', 'draw', 'make', 'design',
+        'image', 'picture', 'photo', 'illustration', 'artwork'
     ]
     const lowerText = text.toLowerCase()
-    return imageKeywords.some((keyword) => lowerText.includes(keyword))
+    return imageKeywords.some(keyword => lowerText.includes(keyword))
 }
 
-const isSemanticSearchPrompt = (text) => {
-    const searchKeywords = [
-        "what is",
-        "explain",
-        "how does",
-        "tell me about",
-        "describe",
-        "define",
-        "search",
-        "find",
-        "learn about",
-        "information",
-        "details",
-        "show me",
+// Helper function to detect if prompt is for VIDEO generation
+const isVideoGenerationPrompt = (text) => {
+    const videoKeywords = [
+        'video', 'clip', 'animate', 'talking', 'explain in video',
+        'generate video', 'create video', 'make video', 'video about'
     ]
     const lowerText = text.toLowerCase()
-    return searchKeywords.some((keyword) => lowerText.includes(keyword)) || !isImageGenerationPrompt(text)
+    return videoKeywords.some(keyword => lowerText.includes(keyword))
+}
+
+// Helper function to detect if prompt is for semantic search
+const isSemanticSearchPrompt = (text) => {
+    const searchKeywords = [
+        'search', 'find', 'look for', 'what is', 'explain',
+        'tell me about', 'how does', 'why', 'when', 'where'
+    ]
+    const lowerText = text.toLowerCase()
+    return searchKeywords.some(keyword => lowerText.includes(keyword))
 }
 
 function ImageSkeleton() {
@@ -95,6 +83,8 @@ export function AIChatScreen() {
     const [feedbackGiven, setFeedbackGiven] = useState({}) // Track feedback per message
     const [showFeedbackInput, setShowFeedbackInput] = useState({}) // Show improvement input
     const [improvementText, setImprovementText] = useState({}) // Store improvement suggestions
+    const [isGeneratingVideo, setIsGeneratingVideo] = useState({}) // Track video generation per message
+    const [videoUrls, setVideoUrls] = useState({}) // Store video URLs per message
     const messagesEndRef = useRef(null)
 
     const hasStartedConversation = messages.length > 0
@@ -142,11 +132,96 @@ export function AIChatScreen() {
         }
     }
 
-    const simulateAIResponse = async (userMessage) => {
-        const isImageRequest = isImageGenerationPrompt(userMessage)
-        const isSearchRequest = isSemanticSearchPrompt(userMessage) && !isImageRequest
+    const handleGenerateVideo = async (messageId, script) => {
+        console.log('🎬 Starting video generation for message:', messageId)
+        console.log('📝 Script:', script)
+        setIsGeneratingVideo(prev => ({ ...prev, [messageId]: true }))
 
-        if (isSearchRequest) {
+        try {
+            console.log('📡 Sending request to backend...')
+            // Call backend to generate video
+            const response = await fetch('http://localhost:8000/api/generate-video', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    script: script,
+                    avatar: 'professional_woman'
+                })
+            })
+
+            console.log('📨 Response status:', response.status)
+            console.log('📨 Response OK:', response.ok)
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`)
+            }
+
+            const data = await response.json()
+            console.log('✅ Response data:', data)
+
+            if (data.status === 'success') {
+                // Video is ready immediately
+                const videoUrl = `http://localhost:8000${data.video_url}`
+                console.log('🎥 Video URL:', videoUrl)
+                setVideoUrls(prev => ({ ...prev, [messageId]: videoUrl }))
+                setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
+                console.log('✨ Video state updated successfully!')
+            } else {
+                console.error('❌ Video generation failed:', data.message)
+                throw new Error(data.message || 'Video generation failed')
+            }
+
+        } catch (error) {
+            console.error('💥 Video generation error:', error)
+            setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
+            alert(`Failed to generate video: ${error.message}`)
+        }
+    }
+
+    const simulateAIResponse = async (userMessage) => {
+        // Check in order of priority: VIDEO first (most specific), then IMAGE, then SEARCH
+        const isVideoRequest = isVideoGenerationPrompt(userMessage)
+        const isImageRequest = !isVideoRequest && isImageGenerationPrompt(userMessage)
+        const isSearchRequest = !isVideoRequest && !isImageRequest && isSemanticSearchPrompt(userMessage)
+
+        if (isVideoRequest) {
+            // Handle VIDEO generation directly from prompt
+            const aiMessage = {
+                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // Unique ID
+                content: userMessage,
+                sender: 'ai',
+                timestamp: new Date(), // Changed from toLocaleTimeString() to Date object
+                isVideoGeneration: true
+            }
+            setMessages(prev => [...prev, aiMessage])
+
+            // Extract topic from the prompt (remove video keywords)
+            const topic = userMessage
+                .toLowerCase()
+                .replace(/generate video|create video|make video|video about|give me a video|show me a video/gi, '')
+                .trim()
+
+            // Generate video with the topic
+            await handleGenerateVideo(aiMessage.id, `Here is a video explaining ${topic || 'the requested topic'}.`)
+            return
+        } else if (isImageRequest) {
+            // Image Generation
+            setIsGeneratingImage(true)
+            setTimeout(() => {
+                setIsGeneratingImage(false)
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        id: Date.now().toString(),
+                        content: "Here's the image I generated based on your description!",
+                        sender: "ai",
+                        timestamp: new Date(),
+                        isImagePrompt: true,
+                        imageUrl: `/placeholder.svg?height=400&width=400&query=${encodeURIComponent(userMessage)}`,
+                    },
+                ])
+            }, 3000)
+        } else if (isSearchRequest) {
             // Semantic Search
             setIsSearching(true)
             try {
@@ -336,6 +411,40 @@ export function AIChatScreen() {
                                     >
                                         <p className="text-sm md:text-base leading-relaxed">{message.content}</p>
 
+                                        {/* Direct Video Generation Result */}
+                                        {message.isVideoGeneration && (
+                                            <div className="mt-4 space-y-3">
+                                                {isGeneratingVideo[message.id] && (
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                                            <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                                                            <span>Generating AI video... (10-15 seconds)</span>
+                                                        </div>
+                                                        <div className="w-full bg-secondary rounded-full h-1.5 overflow-hidden">
+                                                            <div className="h-full bg-gradient-to-r from-purple-600 to-blue-600 rounded-full animate-pulse" style={{ width: '60%' }} />
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {videoUrls[message.id] && (
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-2 text-sm text-green-600 font-medium">
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                            </svg>
+                                                            Video ready!
+                                                        </div>
+                                                        <video
+                                                            src={videoUrls[message.id]}
+                                                            controls
+                                                            className="w-full rounded-lg shadow-lg"
+                                                            autoPlay
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {/* Search Results */}
                                         {message.searchResults && (
                                             <div className="mt-3 space-y-2">
@@ -448,6 +557,60 @@ export function AIChatScreen() {
                                                         Thanks for your feedback!
                                                     </span>
                                                 </div>
+                                            </div>
+                                        )}
+
+                                        {/* Video Generation Section (only for search results) */}
+                                        {message.searchResults && message.searchResults.length > 0 && (
+                                            <div className="mt-4 pt-3 border-t border-border/20">
+                                                {!videoUrls[message.id] && !isGeneratingVideo[message.id] && (
+                                                    <button
+                                                        onClick={() => {
+                                                            // Use only the TOP result (most relevant)
+                                                            const topResult = message.searchResults[0]
+                                                            const script = `Based on your query about ${message.content}, here is the most relevant information I found: ${topResult.document}`
+
+                                                            console.log('📜 Generated script:', script)
+                                                            handleGenerateVideo(message.id, script)
+                                                        }}
+                                                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg text-sm font-medium hover:shadow-lg transition-all"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                        </svg>
+                                                        Generate Video Explanation
+                                                    </button>
+                                                )}
+
+                                                {isGeneratingVideo[message.id] && (
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                                            <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                                                            <span>Generating AI video... (10-15 seconds)</span>
+                                                        </div>
+                                                        <div className="w-full bg-secondary rounded-full h-1.5 overflow-hidden">
+                                                            <div className="h-full bg-gradient-to-r from-purple-600 to-blue-600 rounded-full animate-pulse" style={{ width: '60%' }} />
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {videoUrls[message.id] && (
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center gap-2 text-sm text-green-600 font-medium">
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                            </svg>
+                                                            Video ready!
+                                                        </div>
+                                                        <video
+                                                            src={videoUrls[message.id]}
+                                                            controls
+                                                            className="w-full rounded-lg shadow-lg"
+                                                            autoPlay
+                                                        />
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 

@@ -28,6 +28,16 @@ ENV/
 *.sqlite3
 feedback.db
 
+# Generated Videos & Audio (Don't commit large files!)
+backend/outputs/
+backend/temp/
+*.mp4
+*.avi
+*.mov
+*.wav
+backend/assets/avatars/*.jpg
+backend/assets/avatars/*.png
+
 # ChromaDB data (optional - uncomment if you don't want to commit vector data)
 # ../data/chromadb/
 
