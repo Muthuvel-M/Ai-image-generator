@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Sparkles, ImageIcon, Lightbulb, Wand2, ChevronDown, Menu } from "lucide-react"
+import { Send, Sparkles, ImageIcon, Lightbulb, Wand2, ChevronDown, Menu, Search, ThumbsUp, ThumbsDown } from "lucide-react"
 import { FloatingDots } from "./floating-dots"
 
 const isImageGenerationPrompt = (text) => {
@@ -27,6 +27,25 @@ const isImageGenerationPrompt = (text) => {
     return imageKeywords.some((keyword) => lowerText.includes(keyword))
 }
 
+const isSemanticSearchPrompt = (text) => {
+    const searchKeywords = [
+        "what is",
+        "explain",
+        "how does",
+        "tell me about",
+        "describe",
+        "define",
+        "search",
+        "find",
+        "learn about",
+        "information",
+        "details",
+        "show me",
+    ]
+    const lowerText = text.toLowerCase()
+    return searchKeywords.some((keyword) => lowerText.includes(keyword)) || !isImageGenerationPrompt(text)
+}
+
 function ImageSkeleton() {
     return (
         <div className="w-full max-w-sm">
@@ -50,11 +69,32 @@ function ImageSkeleton() {
     )
 }
 
+function SearchSkeleton() {
+    return (
+        <div className="space-y-3 w-full">
+            <div className="flex items-center gap-2 mb-2">
+                <Search className="w-4 h-4 text-muted-foreground/60 animate-pulse" />
+                <p className="text-sm text-muted-foreground/60 animate-pulse">Searching knowledge base...</p>
+            </div>
+            {[1, 2, 3].map((i) => (
+                <div key={i} className="p-4 bg-secondary/30 rounded-lg space-y-2">
+                    <div className="h-3 bg-muted-foreground/10 rounded w-full animate-pulse" style={{ animationDelay: `${i * 100}ms` }} />
+                    <div className="h-3 bg-muted-foreground/10 rounded w-4/5 animate-pulse" style={{ animationDelay: `${i * 150}ms` }} />
+                </div>
+            ))}
+        </div>
+    )
+}
+
 export function AIChatScreen() {
     const [inputValue, setInputValue] = useState("")
     const [messages, setMessages] = useState([])
     const [isTyping, setIsTyping] = useState(false)
     const [isGeneratingImage, setIsGeneratingImage] = useState(false)
+    const [isSearching, setIsSearching] = useState(false)
+    const [feedbackGiven, setFeedbackGiven] = useState({}) // Track feedback per message
+    const [showFeedbackInput, setShowFeedbackInput] = useState({}) // Show improvement input
+    const [improvementText, setImprovementText] = useState({}) // Store improvement suggestions
     const messagesEndRef = useRef(null)
 
     const hasStartedConversation = messages.length > 0
@@ -63,10 +103,99 @@ export function AIChatScreen() {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [messages])
 
-    const simulateAIResponse = (userMessage) => {
-        const isImageRequest = isImageGenerationPrompt(userMessage)
+    const handleFeedback = async (messageId, rating, query) => {
+        // Mark as given
+        setFeedbackGiven(prev => ({ ...prev, [messageId]: rating }))
 
-        if (isImageRequest) {
+        // If thumbs down, show input for improvement
+        if (rating === 'down') {
+            setShowFeedbackInput(prev => ({ ...prev, [messageId]: true }))
+        } else {
+            // If thumbs up, send immediately
+            await sendFeedbackToBackend(messageId, rating, query, null)
+        }
+    }
+
+    const handleImprovementSubmit = async (messageId, query) => {
+        const improvement = improvementText[messageId]
+        if (improvement && improvement.trim()) {
+            await sendFeedbackToBackend(messageId, 'down', query, improvement)
+            setShowFeedbackInput(prev => ({ ...prev, [messageId]: false }))
+        }
+    }
+
+    const sendFeedbackToBackend = async (messageId, rating, query, improvement) => {
+        try {
+            await fetch('http://localhost:8000/api/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: query,
+                    result_id: messageId,
+                    clicked: true,
+                    rating: rating === 'up' ? 5 : 1,
+                    improvement: improvement
+                })
+            })
+        } catch (error) {
+            console.error('Failed to send feedback:', error)
+        }
+    }
+
+    const simulateAIResponse = async (userMessage) => {
+        const isImageRequest = isImageGenerationPrompt(userMessage)
+        const isSearchRequest = isSemanticSearchPrompt(userMessage) && !isImageRequest
+
+        if (isSearchRequest) {
+            // Semantic Search
+            setIsSearching(true)
+            try {
+                const response = await fetch('http://localhost:8000/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: userMessage, top_k: 5 })
+                })
+
+                const data = await response.json()
+                setIsSearching(false)
+
+                if (data.results && data.results.length > 0) {
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            id: Date.now().toString(),
+                            content: `Found ${data.results.length} relevant results:`,
+                            sender: "ai",
+                            timestamp: new Date(),
+                            searchResults: data.results,
+                            isSearch: true,
+                        },
+                    ])
+                } else {
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            id: Date.now().toString(),
+                            content: "I couldn't find relevant information in my knowledge base. Try rephrasing your question!",
+                            sender: "ai",
+                            timestamp: new Date(),
+                        },
+                    ])
+                }
+            } catch (error) {
+                setIsSearching(false)
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        id: Date.now().toString(),
+                        content: "Sorry, I'm having trouble connecting to my knowledge base. Make sure the backend server is running!",
+                        sender: "ai",
+                        timestamp: new Date(),
+                    },
+                ])
+            }
+        } else if (isImageRequest) {
+            // Image Generation
             setIsGeneratingImage(true)
             setTimeout(() => {
                 setIsGeneratingImage(false)
@@ -83,17 +212,13 @@ export function AIChatScreen() {
                 ])
             }, 3000)
         } else {
+            // General response
             setIsTyping(true)
             setTimeout(() => {
                 const aiResponses = [
-                    "I'd be happy to help you create that image! Let me work on generating something beautiful based on your description.",
-                    "Great idea! I'm processing your request and will create a stunning visual for you.",
-                    "Interesting concept! I'll generate an image that captures your vision perfectly.",
-                    "I love your creativity! Working on transforming your idea into a visual masterpiece.",
-                    "I'd be happy to help you with that! Let me know if you have any specific requirements.",
-                    "Great question! I can assist you with various creative tasks.",
-                    "Interesting idea! Would you like me to generate an image for you? Just describe what you'd like to see.",
-                    "I'm here to help! Feel free to ask me to create images or answer any questions.",
+                    "I can help you search my knowledge base or generate images! Just ask me a question or describe an image you'd like.",
+                    "You can ask me about technology topics, or request image generation by describing what you want to create.",
+                    "I'm here to help! I can search for information or generate images based on your descriptions.",
                 ]
                 const randomResponse = aiResponses[Math.floor(Math.random() * aiResponses.length)]
 
@@ -128,10 +253,10 @@ export function AIChatScreen() {
 
     const handleQuickAction = (action) => {
         const prompts = {
+            "Search AI": "What is artificial intelligence?",
+            "Search Quantum": "Explain quantum computing",
             "Generate Art": "Create an artistic abstract painting with vibrant colors",
             "Photo Realistic": "Generate a photo-realistic landscape image",
-            "Get Ideas": "Suggest some creative image ideas for a portfolio",
-            Enhance: "Help me enhance my creative vision",
         }
         setInputValue(prompts[action] || action)
     }
@@ -205,11 +330,51 @@ export function AIChatScreen() {
                                 <div key={message.id} className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
                                     <div
                                         className={`max-w-[80%] px-4 py-3 rounded-2xl ${message.sender === "user"
-                                                ? "bg-foreground text-background rounded-br-md"
-                                                : "bg-white border border-border/50 text-foreground rounded-bl-md shadow-sm"
+                                            ? "bg-foreground text-background rounded-br-md"
+                                            : "bg-white border border-border/50 text-foreground rounded-bl-md shadow-sm"
                                             }`}
                                     >
                                         <p className="text-sm md:text-base leading-relaxed">{message.content}</p>
+
+                                        {/* Search Results */}
+                                        {message.searchResults && (
+                                            <div className="mt-3 space-y-2">
+                                                {message.searchResults.map((result, idx) => {
+                                                    const relevance = result.distance
+                                                        ? Math.max(0, (1 - result.distance) * 100)
+                                                        : 85;
+
+                                                    return (
+                                                        <div
+                                                            key={idx}
+                                                            className="p-3 bg-secondary/10 rounded-lg border border-border/30 hover:border-border/60 transition-colors"
+                                                        >
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <span className="text-xs font-semibold text-foreground">
+                                                                    Result #{idx + 1}
+                                                                </span>
+                                                                <div className="flex items-center gap-1">
+                                                                    <div className="h-1.5 bg-border rounded-full w-16 overflow-hidden">
+                                                                        <div
+                                                                            className="h-full bg-gradient-to-r from-green-500 to-emerald-500 rounded-full"
+                                                                            style={{ width: `${relevance}%` }}
+                                                                        />
+                                                                    </div>
+                                                                    <span className="text-xs text-muted-foreground">
+                                                                        {relevance.toFixed(0)}%
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <p className="text-sm text-foreground leading-relaxed">
+                                                                {result.document}
+                                                            </p>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+
+                                        {/* Image Results */}
                                         {message.imageUrl && (
                                             <div className="mt-3">
                                                 <img
@@ -219,6 +384,73 @@ export function AIChatScreen() {
                                                 />
                                             </div>
                                         )}
+
+                                        {/* Message-level Feedback (only for AI messages) */}
+                                        {message.sender === "ai" && !feedbackGiven[message.id] && (
+                                            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/20">
+                                                <span className="text-xs text-muted-foreground">Was this helpful?</span>
+                                                <button
+                                                    onClick={() => handleFeedback(message.id, 'up', message.content)}
+                                                    className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-all"
+                                                    title="Thumbs up"
+                                                >
+                                                    <ThumbsUp className="w-3.5 h-3.5" />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleFeedback(message.id, 'down', message.content)}
+                                                    className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-all"
+                                                    title="Thumbs down"
+                                                >
+                                                    <ThumbsDown className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {/* Show improvement input when thumbs down is clicked */}
+                                        {showFeedbackInput[message.id] && (
+                                            <div className="mt-3 pt-3 border-t border-border/20 space-y-2">
+                                                <p className="text-xs text-muted-foreground">What could we improve?</p>
+                                                <textarea
+                                                    value={improvementText[message.id] || ''}
+                                                    onChange={(e) => setImprovementText(prev => ({ ...prev, [message.id]: e.target.value }))}
+                                                    placeholder="Tell us how we can make this better..."
+                                                    className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-foreground/20 bg-background resize-none"
+                                                    rows="2"
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => handleImprovementSubmit(message.id, message.content)}
+                                                        disabled={!improvementText[message.id]?.trim()}
+                                                        className="px-3 py-1 bg-foreground text-background rounded-md text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                                                    >
+                                                        Submit Feedback
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setShowFeedbackInput(prev => ({ ...prev, [message.id]: false }))}
+                                                        className="px-3 py-1 bg-secondary text-secondary-foreground rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Feedback confirmation */}
+                                        {feedbackGiven[message.id] && !showFeedbackInput[message.id] && (
+                                            <div className="mt-3 pt-3 border-t border-border/20">
+                                                <div className="flex items-center gap-2">
+                                                    {feedbackGiven[message.id] === 'up' ? (
+                                                        <ThumbsUp className="w-3.5 h-3.5 text-green-600" />
+                                                    ) : (
+                                                        <ThumbsDown className="w-3.5 h-3.5 text-red-600" />
+                                                    )}
+                                                    <span className="text-xs text-muted-foreground">
+                                                        Thanks for your feedback!
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <span
                                             className={`text-xs mt-1 block ${message.sender === "user" ? "text-background/60" : "text-muted-foreground"
                                                 }`}
@@ -228,6 +460,14 @@ export function AIChatScreen() {
                                     </div>
                                 </div>
                             ))}
+
+                            {isSearching && (
+                                <div className="flex justify-start">
+                                    <div className="bg-white border border-border/50 rounded-2xl rounded-bl-md px-4 py-4 shadow-sm max-w-[80%]">
+                                        <SearchSkeleton />
+                                    </div>
+                                </div>
+                            )}
 
                             {isGeneratingImage && (
                                 <div className="flex justify-start">
@@ -273,7 +513,7 @@ export function AIChatScreen() {
                                     type="text"
                                     value={inputValue}
                                     onChange={(e) => setInputValue(e.target.value)}
-                                    placeholder="Describe the image you want to create..."
+                                    placeholder="Ask a question or describe an image to create..."
                                     className="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground text-base"
                                 />
                                 <button
@@ -289,10 +529,26 @@ export function AIChatScreen() {
                             <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/30 flex-wrap">
                                 <button
                                     type="button"
-                                    onClick={() => handleQuickAction("Generate Art")}
+                                    onClick={() => handleQuickAction("Search AI")}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80 transition-colors"
+                                >
+                                    <Search className="w-3.5 h-3.5" />
+                                    <span>Search AI</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickAction("Search Quantum")}
                                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80 transition-colors"
                                 >
                                     <Sparkles className="w-3.5 h-3.5" />
+                                    <span>Quantum</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickAction("Generate Art")}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80 transition-colors"
+                                >
+                                    <Wand2 className="w-3.5 h-3.5" />
                                     <span>Generate Art</span>
                                 </button>
                                 <button
@@ -302,22 +558,6 @@ export function AIChatScreen() {
                                 >
                                     <ImageIcon className="w-3.5 h-3.5" />
                                     <span>Photo Realistic</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleQuickAction("Get Ideas")}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80 transition-colors"
-                                >
-                                    <Lightbulb className="w-3.5 h-3.5" />
-                                    <span>Get Ideas</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleQuickAction("Enhance")}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80 transition-colors"
-                                >
-                                    <Wand2 className="w-3.5 h-3.5" />
-                                    <span>Enhance</span>
                                 </button>
                             </div>
                         </div>
