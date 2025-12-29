@@ -80,12 +80,16 @@ export function AIChatScreen() {
     const [isTyping, setIsTyping] = useState(false)
     const [isGeneratingImage, setIsGeneratingImage] = useState(false)
     const [isSearching, setIsSearching] = useState(false)
+    const [mode, setMode] = useState("search") // "search" or "video"
     const [feedbackGiven, setFeedbackGiven] = useState({}) // Track feedback per message
     const [showFeedbackInput, setShowFeedbackInput] = useState({}) // Show improvement input
     const [improvementText, setImprovementText] = useState({}) // Store improvement suggestions
     const [isGeneratingVideo, setIsGeneratingVideo] = useState({}) // Track video generation per message
     const [videoUrls, setVideoUrls] = useState({}) // Store video URLs per message
     const messagesEndRef = useRef(null)
+
+    // API URL from environment variable
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
     const hasStartedConversation = messages.length > 0
 
@@ -116,7 +120,7 @@ export function AIChatScreen() {
 
     const sendFeedbackToBackend = async (messageId, rating, query, improvement) => {
         try {
-            await fetch('http://localhost:8000/api/feedback', {
+            await fetch(`${API_URL}/api/feedback`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -140,7 +144,7 @@ export function AIChatScreen() {
         try {
             console.log('📡 Sending request to backend...')
             // Call backend to generate video
-            const response = await fetch('http://localhost:8000/api/generate-video', {
+            const response = await fetch(`${API_URL}/api/generate-video`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -161,7 +165,7 @@ export function AIChatScreen() {
 
             if (data.status === 'success') {
                 // Video is ready immediately
-                const videoUrl = `http://localhost:8000${data.video_url}`
+                const videoUrl = `${API_URL}${data.video_url}`
                 console.log('🎥 Video URL:', videoUrl)
                 setVideoUrls(prev => ({ ...prev, [messageId]: videoUrl }))
                 setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
@@ -179,32 +183,58 @@ export function AIChatScreen() {
     }
 
     const simulateAIResponse = async (userMessage) => {
-        // Check in order of priority: VIDEO first (most specific), then IMAGE, then SEARCH
-        const isVideoRequest = isVideoGenerationPrompt(userMessage)
-        const isImageRequest = !isVideoRequest && isImageGenerationPrompt(userMessage)
-        const isSearchRequest = !isVideoRequest && !isImageRequest && isSemanticSearchPrompt(userMessage)
-
-        if (isVideoRequest) {
-            // Handle VIDEO generation directly from prompt
+        // Check mode: if video mode, generate video directly
+        if (mode === "video") {
+            // In video mode, search first but don't show results, just generate video
             const aiMessage = {
-                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // Unique ID
-                content: userMessage,
+                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                content: `Generating video for: "${userMessage}"`,
                 sender: 'ai',
-                timestamp: new Date(), // Changed from toLocaleTimeString() to Date object
+                timestamp: new Date(),
                 isVideoGeneration: true
             }
             setMessages(prev => [...prev, aiMessage])
 
-            // Extract topic from the prompt (remove video keywords)
-            const topic = userMessage
-                .toLowerCase()
-                .replace(/generate video|create video|make video|video about|give me a video|show me a video/gi, '')
-                .trim()
+            try {
+                // First, search to get the top result
+                const response = await fetch(`${API_URL}/api/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: userMessage, top_k: 1 })
+                })
 
-            // Generate video with the topic
-            await handleGenerateVideo(aiMessage.id, `Here is a video explaining ${topic || 'the requested topic'}.`)
+                const data = await response.json()
+
+                if (data.results && data.results.length > 0) {
+                    // Use the top result's document as the script
+                    const script = data.results[0].document
+                    await handleGenerateVideo(aiMessage.id, script)
+                } else {
+                    // No results found
+                    setMessages(prev => [...prev, {
+                        id: Date.now().toString(),
+                        content: "I couldn't find relevant information for video generation. Try a different query!",
+                        sender: "ai",
+                        timestamp: new Date(),
+                    }])
+                }
+            } catch (error) {
+                console.error('Video generation error:', error)
+                setMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    content: "Sorry, I encountered an error while generating the video.",
+                    sender: "ai",
+                    timestamp: new Date(),
+                }])
+            }
             return
-        } else if (isImageRequest) {
+        }
+
+        // Check in order of priority: IMAGE, then SEARCH
+        const isImageRequest = isImageGenerationPrompt(userMessage)
+        const isSearchRequest = !isImageRequest && isSemanticSearchPrompt(userMessage)
+
+        if (isImageRequest) {
             // Image Generation
             setIsGeneratingImage(true)
             setTimeout(() => {
@@ -225,7 +255,7 @@ export function AIChatScreen() {
             // Semantic Search
             setIsSearching(true)
             try {
-                const response = await fetch('http://localhost:8000/api/search', {
+                const response = await fetch(`${API_URL}/api/search`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: userMessage, top_k: 5 })
@@ -568,7 +598,7 @@ export function AIChatScreen() {
                                                         onClick={() => {
                                                             // Use only the TOP result (most relevant)
                                                             const topResult = message.searchResults[0]
-                                                            const script = `Based on your query about ${message.content}, here is the most relevant information I found: ${topResult.document}`
+                                                            const script = topResult.document
 
                                                             console.log('📜 Generated script:', script)
                                                             handleGenerateVideo(message.id, script)
@@ -613,6 +643,9 @@ export function AIChatScreen() {
                                                 )}
                                             </div>
                                         )}
+
+
+
 
                                         <span
                                             className={`text-xs mt-1 block ${message.sender === "user" ? "text-background/60" : "text-muted-foreground"
@@ -676,9 +709,28 @@ export function AIChatScreen() {
                                     type="text"
                                     value={inputValue}
                                     onChange={(e) => setInputValue(e.target.value)}
-                                    placeholder="Ask a question or describe an image to create..."
+                                    placeholder={mode === "search" ? "Ask a question or describe an image to create..." : "Enter a topic for video generation..."}
                                     className="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground text-base"
                                 />
+                                {/* Mode Toggle Button */}
+                                <button
+                                    type="button"
+                                    onClick={() => setMode(mode === "search" ? "video" : "search")}
+                                    className={`p-2 rounded-lg transition-all ${mode === "video"
+                                        ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
+                                        : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                                        }`}
+                                    title={mode === "search" ? "Switch to Video Mode" : "Switch to Search Mode"}
+                                >
+                                    {mode === "search" ? (
+                                        <Search className="w-5 h-5" />
+                                    ) : (
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                    )}
+                                </button>
                                 <button
                                     type="submit"
                                     className="w-10 h-10 rounded-full bg-foreground text-background flex items-center justify-center hover:opacity-80 transition-opacity disabled:opacity-40"
