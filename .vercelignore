@@ -1,0 +1,7 @@
+# Ignore backend directory - we're using external backend
+backend/
+data/
+*.db
+*.sqlite
+*.sqlite3
+

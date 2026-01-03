@@ -9,12 +9,15 @@ export default function SemanticSearchPage() {
     const [loading, setLoading] = useState(false);
     const [stats, setStats] = useState(null);
 
+    // API URL - use relative path for Vercel, absolute for local dev
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? '' : 'http://localhost:8000');
+
     const handleSearch = async () => {
         if (!query.trim()) return;
 
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:8000/api/search', {
+            const res = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/search`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query, top_k: 5 })
@@ -31,7 +34,7 @@ export default function SemanticSearchPage() {
 
     const logFeedback = async (resultId, rating) => {
         try {
-            await fetch('http://localhost:8000/api/feedback', {
+            await fetch(`${API_URL ? API_URL + '/api' : '/api'}/feedback`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -48,7 +51,7 @@ export default function SemanticSearchPage() {
 
     const fetchStats = async () => {
         try {
-            const res = await fetch('http://localhost:8000/api/stats');
+            const res = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/stats`);
             const data = await res.json();
             setStats(data);
         } catch (error) {

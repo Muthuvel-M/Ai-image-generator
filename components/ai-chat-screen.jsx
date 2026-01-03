@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { Send, Sparkles, ImageIcon, Lightbulb, Wand2, ChevronDown, Menu, Search, ThumbsUp, ThumbsDown } from "lucide-react"
 import { FloatingDots } from "./floating-dots"
+import { getBytezService } from "@/lib/bytez-service"
 
 // Helper function to detect if prompt is for image generation
 const isImageGenerationPrompt = (text) => {
@@ -88,8 +89,8 @@ export function AIChatScreen() {
     const [videoUrls, setVideoUrls] = useState({}) // Store video URLs per message
     const messagesEndRef = useRef(null)
 
-    // API URL from environment variable
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+    // API URL from environment variable - use relative path for Vercel, absolute for local dev
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? '' : 'http://localhost:8000')
 
     const hasStartedConversation = messages.length > 0
 
@@ -120,7 +121,7 @@ export function AIChatScreen() {
 
     const sendFeedbackToBackend = async (messageId, rating, query, improvement) => {
         try {
-            await fetch(`${API_URL}/api/feedback`, {
+            await fetch(`${API_URL ? API_URL + '/api' : '/api'}/feedback`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -137,48 +138,77 @@ export function AIChatScreen() {
     }
 
     const handleGenerateVideo = async (messageId, script) => {
-        console.log('🎬 Starting video generation for message:', messageId)
-        console.log('📝 Script:', script)
+        console.log('🎬 Starting video generation with Bytez (Google Veo 3.0 Fast) for message:', messageId)
+        console.log('📝 Original Script/Content:', script)
         setIsGeneratingVideo(prev => ({ ...prev, [messageId]: true }))
 
         try {
-            console.log('📡 Sending request to backend...')
-            // Call backend to generate video
-            const response = await fetch(`${API_URL}/api/generate-video`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    script: script,
-                    avatar: 'professional_woman'
-                })
-            })
+            console.log('📡 Initializing Bytez service...')
+            const bytezService = getBytezService()
 
-            console.log('📨 Response status:', response.status)
-            console.log('📨 Response OK:', response.ok)
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`)
+            if (!bytezService) {
+                throw new Error('Bytez service not available. Please check your API key configuration.')
             }
 
-            const data = await response.json()
-            console.log('✅ Response data:', data)
+            // Create avatar-based prompt for Google Veo 3
+            // Combine the avatar context with the actual content
+            const avatarPrompt = `A man sits at a desk and reads aloud the following information: "${script.substring(0, 500)}"${script.length > 500 ? '...' : ''}. The man is explaining this content in a clear, educational manner with gestures and expressions.`
 
-            if (data.status === 'success') {
-                // Video is ready immediately
-                const videoUrl = `${API_URL}${data.video_url}`
-                console.log('🎥 Video URL:', videoUrl)
-                setVideoUrls(prev => ({ ...prev, [messageId]: videoUrl }))
-                setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
-                console.log('✨ Video state updated successfully!')
+            console.log('🎭 Enhanced Avatar Prompt:', avatarPrompt)
+            console.log('🎥 Calling Google Veo 3.0 Fast model with avatar prompt...')
+
+            // Use Google Veo 3.0 Fast to generate video with avatar prompt
+            const { error, output } = await bytezService.generateWithVeo3(avatarPrompt)
+
+            console.log('📨 Response received:', { error, output })
+
+            if (error) {
+                console.error('❌ Bytez error:', error)
+                throw new Error(error)
+            }
+
+            if (output) {
+                console.log('✅ Video generation successful!')
+                console.log('🎥 Output data:', output)
+
+                // Extract video URL from Bytez response
+                // Bytez may return the video URL in different formats depending on the model
+                // Common formats: output.url, output.video_url, output directly as URL, or output.data
+                let videoUrl = null
+
+                if (typeof output === 'string') {
+                    // Direct URL string
+                    videoUrl = output
+                } else if (output.url) {
+                    videoUrl = output.url
+                } else if (output.video_url) {
+                    videoUrl = output.video_url
+                } else if (output.data && output.data.url) {
+                    videoUrl = output.data.url
+                } else if (output.video) {
+                    videoUrl = output.video
+                }
+
+                if (videoUrl) {
+                    console.log('🎬 Video URL extracted:', videoUrl)
+                    setVideoUrls(prev => ({ ...prev, [messageId]: videoUrl }))
+                    setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
+                    console.log('✨ Video state updated successfully!')
+                } else {
+                    // Store the raw output for debugging and potentially show a message
+                    console.log('⚠️ Video URL not found in standard locations. Full output:', output)
+                    setVideoUrls(prev => ({ ...prev, [messageId]: JSON.stringify(output) }))
+                    setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
+                }
             } else {
-                console.error('❌ Video generation failed:', data.message)
-                throw new Error(data.message || 'Video generation failed')
+                console.error('❌ No output received from Bytez')
+                throw new Error('No output received from video generation service')
             }
 
         } catch (error) {
             console.error('💥 Video generation error:', error)
             setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
-            alert(`Failed to generate video: ${error.message}`)
+            alert(`Failed to generate video with Google Veo 3.0 Fast: ${error.message}`)
         }
     }
 
@@ -197,7 +227,7 @@ export function AIChatScreen() {
 
             try {
                 // First, search to get the top result
-                const response = await fetch(`${API_URL}/api/search`, {
+                const response = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/search`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: userMessage, top_k: 1 })
@@ -255,7 +285,7 @@ export function AIChatScreen() {
             // Semantic Search
             setIsSearching(true)
             try {
-                const response = await fetch(`${API_URL}/api/search`, {
+                const response = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/search`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: userMessage, top_k: 5 })
@@ -448,7 +478,7 @@ export function AIChatScreen() {
                                                     <div className="space-y-2">
                                                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                                             <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
-                                                            <span>Generating AI video... (10-15 seconds)</span>
+                                                            <span>Generating video with Google Veo 3.0 Fast...</span>
                                                         </div>
                                                         <div className="w-full bg-secondary rounded-full h-1.5 overflow-hidden">
                                                             <div className="h-full bg-gradient-to-r from-purple-600 to-blue-600 rounded-full animate-pulse" style={{ width: '60%' }} />
