@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from "react"
 import { Send, Sparkles, ImageIcon, Lightbulb, Wand2, ChevronDown, Menu, Search, ThumbsUp, ThumbsDown } from "lucide-react"
 import { FloatingDots } from "./floating-dots"
-import { getBytezService } from "@/lib/bytez-service"
 
 // Helper function to detect if prompt is for image generation
 const isImageGenerationPrompt = (text) => {
@@ -138,16 +137,17 @@ export function AIChatScreen() {
     }
 
     const handleGenerateVideo = async (messageId, script) => {
-        console.log('🎬 Starting video generation with Bytez (Google Veo 3.0 Fast) for message:', messageId)
+        console.log('🎬 Starting video generation with Google Veo 3.0 for message:', messageId)
         console.log('📝 Original Script/Content:', script)
         setIsGeneratingVideo(prev => ({ ...prev, [messageId]: true }))
 
         try {
-            console.log('📡 Initializing Bytez service...')
-            const bytezService = getBytezService()
+            console.log('📡 Initializing Google Veo service...')
+            const { getGoogleVeoService } = await import('@/lib/google-veo-service')
+            const veoService = await getGoogleVeoService()
 
-            if (!bytezService) {
-                throw new Error('Bytez service not available. Please check your API key configuration.')
+            if (!veoService) {
+                throw new Error('Google Veo service not available. Please check your API key configuration.')
             }
 
             // Create avatar-based prompt for Google Veo 3
@@ -158,7 +158,7 @@ export function AIChatScreen() {
             console.log('🎥 Calling Google Veo 3.0 Fast model with avatar prompt...')
 
             // Use Google Veo 3.0 Fast to generate video with avatar prompt
-            const { error, output } = await bytezService.generateWithVeo3(avatarPrompt)
+            const { error, output } = await veoService.generateWithVeo3(avatarPrompt)
 
             console.log('📨 Response received:', { error, output })
 
@@ -201,14 +201,14 @@ export function AIChatScreen() {
                     setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
                 }
             } else {
-                console.error('❌ No output received from Bytez')
+                console.error('❌ No output received from Google Veo')
                 throw new Error('No output received from video generation service')
             }
 
         } catch (error) {
             console.error('💥 Video generation error:', error)
             setIsGeneratingVideo(prev => ({ ...prev, [messageId]: false }))
-            alert(`Failed to generate video with Google Veo 3.0 Fast: ${error.message}`)
+            alert(`Failed to generate video with Google Veo 3.0: ${error.message}`)
         }
     }
 
@@ -226,7 +226,7 @@ export function AIChatScreen() {
             setMessages(prev => [...prev, aiMessage])
 
             try {
-                // First, search to get the top result
+                // First, try to search to get relevant context
                 const response = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/search`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -240,13 +240,8 @@ export function AIChatScreen() {
                     const script = data.results[0].document
                     await handleGenerateVideo(aiMessage.id, script)
                 } else {
-                    // No results found
-                    setMessages(prev => [...prev, {
-                        id: Date.now().toString(),
-                        content: "I couldn't find relevant information for video generation. Try a different query!",
-                        sender: "ai",
-                        timestamp: new Date(),
-                    }])
+                    // No search results found, but still generate video using the user's prompt directly
+                    await handleGenerateVideo(aiMessage.id, userMessage)
                 }
             } catch (error) {
                 console.error('Video generation error:', error)
