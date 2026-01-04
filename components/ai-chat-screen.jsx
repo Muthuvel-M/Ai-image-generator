@@ -86,6 +86,12 @@ export function AIChatScreen() {
     const [improvementText, setImprovementText] = useState({}) // Store improvement suggestions
     const [isGeneratingVideo, setIsGeneratingVideo] = useState({}) // Track video generation per message
     const [videoUrls, setVideoUrls] = useState({}) // Store video URLs per message
+    // Script approval workflow state
+    const [generatedScripts, setGeneratedScripts] = useState({}) // Store generated scripts per message
+    const [editedScripts, setEditedScripts] = useState({}) // Store edited scripts per message
+    const [scriptDescriptions, setScriptDescriptions] = useState({}) // Store script descriptions
+    const [isGeneratingScript, setIsGeneratingScript] = useState({}) // Track script generation per message
+    const [scriptApprovalStatus, setScriptApprovalStatus] = useState({}) // 'pending' | 'approved' | 'rejected'
     const messagesEndRef = useRef(null)
 
     // API URL from environment variable - use relative path for Vercel, absolute for local dev
@@ -136,9 +142,69 @@ export function AIChatScreen() {
         }
     }
 
+    // Generate script for video
+    const handleGenerateScript = async (messageId, userInput) => {
+        console.log('🎭 Generating script for:', messageId)
+        setIsGeneratingScript(prev => ({ ...prev, [messageId]: true }))
+
+        try {
+            const response = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/generate-script`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_input: userInput })
+            })
+
+            if (!response.ok) {
+                throw new Error(`Failed to generate script: ${response.statusText}`)
+            }
+
+            const data = await response.json()
+            setGeneratedScripts(prev => ({ ...prev, [messageId]: data.script }))
+            setEditedScripts(prev => ({ ...prev, [messageId]: data.script }))
+            setScriptDescriptions(prev => ({ ...prev, [messageId]: data.description || '' }))
+            setScriptApprovalStatus(prev => ({ ...prev, [messageId]: 'pending' }))
+            setIsGeneratingScript(prev => ({ ...prev, [messageId]: false }))
+        } catch (error) {
+            console.error('Script generation error:', error)
+            setIsGeneratingScript(prev => ({ ...prev, [messageId]: false }))
+            setMessages(prev => prev.map(msg => 
+                msg.id === messageId 
+                    ? { ...msg, content: `Sorry, I couldn't generate a script: ${error.message}` }
+                    : msg
+            ))
+        }
+    }
+
+    // Handle script approval
+    const handleApproveScript = async (messageId) => {
+        const script = editedScripts[messageId] || generatedScripts[messageId]
+        if (!script || !script.trim()) {
+            alert('Script cannot be empty')
+            return
+        }
+
+        setScriptApprovalStatus(prev => ({ ...prev, [messageId]: 'approved' }))
+        await handleGenerateVideo(messageId, script)
+    }
+
+    // Handle script rejection
+    const handleRejectScript = (messageId) => {
+        setScriptApprovalStatus(prev => ({ ...prev, [messageId]: 'rejected' }))
+        setGeneratedScripts(prev => {
+            const newState = { ...prev }
+            delete newState[messageId]
+            return newState
+        })
+        setEditedScripts(prev => {
+            const newState = { ...prev }
+            delete newState[messageId]
+            return newState
+        })
+    }
+
     const handleGenerateVideo = async (messageId, script) => {
         console.log('🎬 Starting video generation with Google Veo 3.0 for message:', messageId)
-        console.log('📝 Original Script/Content:', script)
+        console.log('📝 Approved Script/Content:', script)
         setIsGeneratingVideo(prev => ({ ...prev, [messageId]: true }))
 
         try {
@@ -213,45 +279,20 @@ export function AIChatScreen() {
     }
 
     const simulateAIResponse = async (userMessage) => {
-        // Check mode: if video mode, generate video directly
+        // Check mode: if video mode, use script generation workflow
         if (mode === "video") {
-            // In video mode, search first but don't show results, just generate video
             const aiMessage = {
                 id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                content: `Generating video for: "${userMessage}"`,
+                content: `Creating video script for: "${userMessage}"`,
                 sender: 'ai',
                 timestamp: new Date(),
-                isVideoGeneration: true
+                isVideoGeneration: true,
+                workflowStep: 'generating-script' // Track workflow step
             }
             setMessages(prev => [...prev, aiMessage])
 
-            try {
-                // First, try to search to get relevant context
-                const response = await fetch(`${API_URL ? API_URL + '/api' : '/api'}/search`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: userMessage, top_k: 1 })
-                })
-
-                const data = await response.json()
-
-                if (data.results && data.results.length > 0) {
-                    // Use the top result's document as the script
-                    const script = data.results[0].document
-                    await handleGenerateVideo(aiMessage.id, script)
-                } else {
-                    // No search results found, but still generate video using the user's prompt directly
-                    await handleGenerateVideo(aiMessage.id, userMessage)
-                }
-            } catch (error) {
-                console.error('Video generation error:', error)
-                setMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    content: "Sorry, I encountered an error while generating the video.",
-                    sender: "ai",
-                    timestamp: new Date(),
-                }])
-            }
+            // Step 1: Generate script
+            await handleGenerateScript(aiMessage.id, userMessage)
             return
         }
 
@@ -466,28 +507,79 @@ export function AIChatScreen() {
                                     >
                                         <p className="text-sm md:text-base leading-relaxed">{message.content}</p>
 
-                                        {/* Direct Video Generation Result */}
+                                        {/* Video Generation Workflow */}
                                         {message.isVideoGeneration && (
                                             <div className="mt-4 space-y-3">
-                                                {isGeneratingVideo[message.id] && (
-                                                    <div className="space-y-2">
-                                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                                {/* Step 1: Generating Script */}
+                                                {isGeneratingScript[message.id] && (
+                                                    <div className="space-y-2 p-3 bg-purple-50 dark:bg-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                                                        <div className="flex items-center gap-2 text-sm text-purple-700 dark:text-purple-300">
                                                             <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
-                                                            <span>Generating video with Google Veo 3.0 Fast...</span>
+                                                            <span>✨ Generating script...</span>
                                                         </div>
-                                                        <div className="w-full bg-secondary rounded-full h-1.5 overflow-hidden">
+                                                        <div className="w-full bg-purple-100 dark:bg-purple-900/30 rounded-full h-1.5 overflow-hidden">
+                                                            <div className="h-full bg-gradient-to-r from-purple-600 to-blue-600 rounded-full animate-pulse" style={{ width: '40%' }} />
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Step 2: Script Approval */}
+                                                {scriptApprovalStatus[message.id] === 'pending' && generatedScripts[message.id] && (
+                                                    <div className="space-y-3 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                                                        <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
+                                                            <span>📝</span>
+                                                            <span>Review & Edit Script</span>
+                                                        </div>
+                                                        {scriptDescriptions[message.id] && (
+                                                            <div className="text-xs text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/30 p-2 rounded">
+                                                                <strong>Concept:</strong> {scriptDescriptions[message.id]}
+                                                            </div>
+                                                        )}
+                                                        <textarea
+                                                            value={editedScripts[message.id] || generatedScripts[message.id] || ''}
+                                                            onChange={(e) => setEditedScripts(prev => ({ ...prev, [message.id]: e.target.value }))}
+                                                            className="w-full p-3 text-sm border border-blue-300 dark:border-blue-700 rounded-lg bg-white dark:bg-gray-900 text-foreground resize-y min-h-[120px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                            placeholder="Edit the script as needed..."
+                                                        />
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => handleApproveScript(message.id)}
+                                                                className="flex-1 px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg text-sm font-medium hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                                                            >
+                                                                <span>✅</span>
+                                                                <span>Approve & Generate Video</span>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleRejectScript(message.id)}
+                                                                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-all"
+                                                            >
+                                                                Reject
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Step 3: Generating Video */}
+                                                {scriptApprovalStatus[message.id] === 'approved' && isGeneratingVideo[message.id] && (
+                                                    <div className="space-y-2 p-3 bg-purple-50 dark:bg-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                                                        <div className="flex items-center gap-2 text-sm text-purple-700 dark:text-purple-300">
+                                                            <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                                                            <span>🎥 Generating video with Google Veo...</span>
+                                                        </div>
+                                                        <div className="w-full bg-purple-100 dark:bg-purple-900/30 rounded-full h-1.5 overflow-hidden">
                                                             <div className="h-full bg-gradient-to-r from-purple-600 to-blue-600 rounded-full animate-pulse" style={{ width: '60%' }} />
                                                         </div>
                                                     </div>
                                                 )}
 
+                                                {/* Step 4: Video Ready */}
                                                 {videoUrls[message.id] && (
                                                     <div className="space-y-2">
-                                                        <div className="flex items-center gap-2 text-sm text-green-600 font-medium">
+                                                        <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 font-medium">
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                                             </svg>
-                                                            Video ready!
+                                                            ✅ Video ready!
                                                         </div>
                                                         <video
                                                             src={videoUrls[message.id]}
